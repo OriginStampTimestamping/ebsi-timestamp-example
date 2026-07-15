@@ -1,0 +1,18 @@
+# Never commit key material or tokens to this public repo.
+# The app only ever holds these in memory at runtime — keep it that way.
+*.jwt
+*.pem
+*.key
+*_seed.hex
+*.hex
+did*.json
+secrets*
+.env
+.env.*
+ 
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+ 
