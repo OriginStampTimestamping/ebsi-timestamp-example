@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EBSI Timestamp</title>
+<!--
+  Trust model:
+  - SHA-256 + ES256 (P-256) signing: native Web Crypto API → no third-party code.
+  - secp256k1 tx signing: ethers.js, version-pinned from cdnjs.
+    Verify / pin its integrity:
+      curl -s https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js \
+        | openssl dgst -sha384 -binary | openssl base64 -A
+    then add  integrity="sha384-<HASH>" crossorigin="anonymous"  to the <script> tag.
+  - Private key + token stay in memory only. Pilot network (api-pilot.ebsi.eu), test net.
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    colors: { page:'#faf9f7', card:'#ffffff', inset:'#f2efeb', line:'#e7e2dc', acc:'#ff6a00', ver:'#0d9488' },
+    fontFamily: { sans:['Inter','system-ui','-apple-system','Segoe UI','Roboto','sans-serif'] }
+  } } };
+</script>
+</head>
+<body class="bg-page text-slate-700 font-sans antialiased">
+<div class="max-w-3xl mx-auto px-5 py-8">
+
+  <!-- Top bar -->
+  <header class="flex items-center justify-between mb-5">
+    <div class="flex items-center gap-3">
+      <img src="https://originstamp.com/assets/logos/Horizontal-Logo-Color.webp" alt="OriginStamp" class="h-7 w-auto" onerror="this.style.display='none'">
+      <div class="border-l border-line pl-3">
+        <h1 class="text-xl font-semibold text-slate-900 leading-tight">EBSI Timestamp</h1>
+        <p class="text-xs text-slate-500">Anchor & verify files on the EBSI pilot ledger.</p>
+      </div>
+    </div>
+    <button id="btnSettings" class="flex items-center gap-2 rounded-lg border border-line bg-card px-3 py-2 text-sm text-slate-700 hover:border-acc transition">
+      <span id="dot" class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </button>
+  </header>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-6 bg-inset rounded-xl p-1">
+    <button id="tabCreate" class="tab flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition">Create timestamp</button>
+    <button id="tabVerify" class="tab flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition">Verify timestamp</button>
+  </div>
+
+  <!-- ============ CREATE VIEW ============ -->
+  <div id="viewCreate">
+    <!-- Missing-params banner -->
+    <div id="banner" class="hidden mb-5 rounded-lg border border-amber-400/50 bg-amber-50 text-amber-800 text-sm px-4 py-3 flex items-center justify-between">
+      <span id="bannerMsg"></span>
+      <button class="underline text-amber-900 shrink-0 ml-3" onclick="openSettings()">Open settings</button>
+    </div>
+
+    <section class="rounded-xl border border-line bg-card shadow-sm p-5 mb-4 border-t-4 border-t-acc">
+      <div class="flex items-center gap-2 mb-3"><span class="step step-acc">1</span><h2 class="text-sm font-semibold text-slate-900">Upload &amp; hash</h2></div>
+      <div id="dropC" class="drop rounded-lg border-2 border-dashed border-line py-10 text-center text-slate-500 cursor-pointer transition">
+        <div class="text-slate-700">Drop a file here</div>
+        <div class="text-xs mt-1">or click to browse — the file never leaves your machine to be hashed</div>
+      </div>
+      <input type="file" id="fileC" class="hidden">
+      <div id="hashBoxC" class="hidden mt-4 space-y-2 text-sm">
+        <div><span class="text-slate-500">File:</span> <span id="fnameC" class="font-mono text-slate-800"></span></div>
+        <div><span class="text-slate-500">SHA-256:</span> <div id="hashC" class="font-mono break-all bg-inset rounded p-2 mt-1 text-emerald-700"></div></div>
+      </div>
+    </section>
+
+    <section id="sec2" class="rounded-xl border border-line bg-card shadow-sm p-5 mb-4 opacity-50 pointer-events-none">
+      <div class="flex items-center gap-2 mb-3"><span class="step step-acc">2</span><h2 class="text-sm font-semibold text-slate-900">Timestamp</h2></div>
+      <div class="grid sm:grid-cols-2 gap-3 text-sm mb-3">
+        <div><span class="text-slate-500">Signer address:</span><div id="addr" class="font-mono break-all bg-inset rounded p-2 mt-1 text-slate-700">—</div></div>
+        <div><span class="text-slate-500">Network:</span><div class="font-mono bg-inset rounded p-2 mt-1 text-slate-700">EBSI pilot</div></div>
+      </div>
+      <details class="mb-3">
+        <summary class="text-xs text-slate-500 cursor-pointer select-none hover:text-slate-800">Advanced — inspect / edit request body</summary>
+        <p class="text-xs text-slate-500 my-2">Pre-filled with the v4 structure.
+          <span class="font-mono">hashAlgorithmIds:[0]</span> = SHA-256 (confirmed live: 1 = SHA-384, 2 = SHA-512).</p>
+        <textarea id="body1" rows="11" class="w-full bg-inset border border-line rounded p-2 font-mono text-xs text-slate-800"></textarea>
+      </details>
+      <button id="btnSend" class="rounded-lg bg-acc text-white px-4 py-2 text-sm font-semibold hover:brightness-105 transition">Send timestamp</button>
+    </section>
+
+    <section class="rounded-xl border border-line bg-card shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-slate-900 mb-3">Log &amp; result</h2>
+      <div id="logC" class="bg-inset rounded p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-80 overflow-auto text-slate-600">Ready.</div>
+    </section>
+  </div>
+
+  <!-- ============ VERIFY VIEW ============ -->
+  <div id="viewVerify" class="hidden">
+    <div class="mb-5 rounded-lg border border-ver/30 bg-ver/5 text-teal-800 text-sm px-4 py-3">
+      Drop a file to check whether its exact contents were ever anchored on EBSI. No keys or token required — this is a public lookup.
+    </div>
+
+    <section class="rounded-xl border border-line bg-card shadow-sm p-5 mb-4 border-t-4 border-t-ver">
+      <div class="flex items-center gap-2 mb-3"><span class="step step-ver">1</span><h2 class="text-sm font-semibold text-slate-900">Upload &amp; hash</h2></div>
+      <div id="dropV" class="drop rounded-lg border-2 border-dashed border-line py-10 text-center text-slate-500 cursor-pointer transition">
+        <div class="text-slate-700">Drop a file to verify</div>
+        <div class="text-xs mt-1">or click to browse</div>
+      </div>
+      <input type="file" id="fileV" class="hidden">
+      <div id="hashBoxV" class="hidden mt-4 space-y-3 text-sm">
+        <div><span class="text-slate-500">File:</span> <span id="fnameV" class="font-mono text-slate-800"></span></div>
+        <div><span class="text-slate-500">SHA-256:</span> <div id="hashV" class="font-mono break-all bg-inset rounded p-2 mt-1 text-teal-700"></div></div>
+        <button id="btnVerify" class="rounded-lg bg-ver text-white px-4 py-2 text-sm font-semibold hover:brightness-105 transition">Verify on EBSI</button>
+      </div>
+    </section>
+
+    <section id="resultBox" class="hidden rounded-xl border-2 shadow-sm p-5 mb-4">
+      <div id="resultInner"></div>
+    </section>
+
+    <section class="rounded-xl border border-line bg-card shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-slate-900 mb-3">Log</h2>
+      <div id="logV" class="bg-inset rounded p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-80 overflow-auto text-slate-600">Ready.</div>
+    </section>
+  </div>
+
+  <p class="text-xs text-slate-500 mt-4">Opened via <span class="font-mono">file://</span>? The browser may block API calls (CORS). Serve locally with
+    <span class="font-mono">python3 -m http.server</span> or use the <span class="font-mono">curl</span> commands printed in the log. Hashing always works offline.</p>
+</div>
+
+<!-- Settings modal -->
+<div id="modal" class="hidden fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50">
+  <div class="bg-card border border-line rounded-xl w-full max-w-lg p-6 shadow-xl">
+    <div class="flex items-center justify-between mb-1">
+      <h3 class="text-lg font-semibold text-slate-900">Settings</h3>
+      <button onclick="closeSettings()" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+    </div>
+    <p class="text-xs text-slate-500 mb-4">Needed for creating timestamps. Kept in memory only — nothing is stored or persisted.</p>
+    <div class="space-y-3 text-sm">
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">API base URL</label>
+        <input id="cfgApi" class="cfg" value="https://api-pilot.ebsi.eu">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">DID</label>
+        <input id="cfgDid" class="cfg" value="did:ebsi:zir5LwBbw9s7qtHUkxYhun8">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">ES256K private key <span class="text-acc">*</span> <span class="text-slate-400">(0x… hex — signs the transaction)</span></label>
+        <input id="cfgPk" type="password" class="cfg" placeholder="0x…">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">ES256 private key <span class="text-slate-400">(JWK — signs the presentation to fetch a token)</span></label>
+        <textarea id="cfgEs256" rows="2" class="cfg" placeholder='{"kty":"EC","crv":"P-256","d":"…","x":"…","y":"…"}'></textarea>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Access token <span class="text-acc">*</span> <span class="text-slate-400">(scope timestamp_write, ~2 h)</span></label>
+        <textarea id="cfgToken" rows="2" class="cfg" placeholder="eyJ… — paste, or fetch with the button below"></textarea>
+        <div class="flex items-center gap-3 mt-2">
+          <button id="btnGetToken" type="button" class="rounded-lg border border-acc text-acc px-3 py-1.5 text-xs font-medium hover:bg-acc/10 transition">Get token</button>
+          <span class="text-xs text-slate-400">Signs an empty VP with your ES256 key against EBSI's Authorisation API.</span>
+        </div>
+      </div>
+    </div>
+    <div class="flex justify-end gap-3 mt-5">
+      <button onclick="closeSettings()" class="rounded-lg border border-line px-4 py-2 text-sm text-slate-700 hover:bg-inset transition">Cancel</button>
+      <button id="cfgSave" class="rounded-lg bg-acc text-white px-4 py-2 text-sm font-semibold hover:brightness-105 transition">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg px-4 py-2 text-sm shadow-lg z-50"></div>
+
+<style>
+  .step{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:9999px;font-size:12px;font-weight:700}
+  .step-acc{background:#ff6a0018;color:#ff6a00}
+  .step-ver{background:#0d948818;color:#0d9488}
+  .cfg{width:100%;background:#faf9f7;border:1px solid #e7e2dc;border-radius:6px;padding:8px 10px;color:#1a1a1a;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .cfg:focus{outline:none;border-color:#ff6a00;box-shadow:0 0 0 2px #ff6a0022}
+  .cfg.err{border-color:#f85149;box-shadow:0 0 0 2px #f8514922}
+  /* tab states */
+  .tab{color:#64748b}
+  .tab.on-acc{background:#fff;color:#ff6a00;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .tab.on-ver{background:#fff;color:#0d9488;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  #dropC.hot{border-color:#ff6a00;background:#fff4ec;color:#111}
+  #dropV.hot{border-color:#0d9488;background:#effcfa;color:#111}
+</style>
+
+<script>
+const $ = id => document.getElementById(id);
+const CONFIG = { api:'https://api-pilot.ebsi.eu', did:'did:ebsi:zir5LwBbw9s7qtHUkxYhun8', pk:'', token:'' };
+const LAST = { create:{hash:null,fname:null,addr:null}, verify:{hash:null,fname:null} };
+
+/* ---------- logging + toast ---------- */
+function logTo(elId,msg,cls){ const el=$(elId); const t=new Date().toISOString().slice(11,19); el.innerHTML+=`\n<span class="${cls||''}">[${t}] ${msg}</span>`; el.scrollTop=el.scrollHeight; }
+function clearLogEl(elId){ $(elId).textContent=''; }
+function toast(msg,type='warn'){
+  const el=$('toast'); el.textContent=msg;
+  el.className='fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg px-4 py-2 text-sm shadow-lg z-50 '+
+    (type==='err'?'bg-red-500 text-white':type==='ok'?'bg-emerald-500 text-white':'bg-amber-400 text-black');
+  el.classList.remove('hidden'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.add('hidden'),3200);
+}
+
+/* ---------- tabs ---------- */
+function switchTab(name){
+  const create = name==='create';
+  $('viewCreate').classList.toggle('hidden', !create);
+  $('viewVerify').classList.toggle('hidden', create);
+  $('tabCreate').className = 'tab flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition'+(create?' on-acc':'');
+  $('tabVerify').className = 'tab flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition'+(create?'':' on-ver');
+}
+$('tabCreate').onclick=()=>switchTab('create');
+$('tabVerify').onclick=()=>switchTab('verify');
+
+/* ---------- settings modal ---------- */
+function openSettings(){ $('modal').classList.remove('hidden'); }
+function closeSettings(){ $('modal').classList.add('hidden'); ['cfgPk','cfgToken','cfgEs256'].forEach(id=>$(id).classList.remove('err')); }
+$('btnSettings').onclick = openSettings;
+$('cfgSave').onclick = ()=>{
+  CONFIG.api=$('cfgApi').value.trim(); CONFIG.did=$('cfgDid').value.trim();
+  CONFIG.pk=$('cfgPk').value.trim(); CONFIG.token=$('cfgToken').value.trim();
+  deriveAddr(); refresh(); closeSettings(); toast('Settings saved','ok');
+};
+function missing(){ const m=[]; if(!CONFIG.pk) m.push('ES256K key'); if(!CONFIG.token) m.push('Access token'); return m; }
+function refresh(){
+  const m=missing();
+  $('dot').className='w-2.5 h-2.5 rounded-full '+(m.length?'bg-amber-400':'bg-emerald-500');
+  if(m.length){ $('banner').classList.remove('hidden'); $('bannerMsg').textContent='Missing: '+m.join(', ')+'. Required before sending.'; }
+  else $('banner').classList.add('hidden');
+}
+
+/* ---------- shared hashing (native Web Crypto) ---------- */
+function wireDrop(dropId,fileId,view){
+  const drop=$(dropId), fi=$(fileId);
+  drop.onclick=()=>fi.click();
+  fi.onchange=e=>{ if(e.target.files[0]) hashFile(e.target.files[0],view); };
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+  drop.addEventListener('drop',e=>{ const f=e.dataTransfer.files[0]; if(f) hashFile(f,view); });
+}
+async function hashFile(file,view){
+  const hex='0x'+[...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))].map(b=>b.toString(16).padStart(2,'0')).join('');
+  LAST[view].hash=hex; LAST[view].fname=file.name;
+  if(view==='create'){
+    $('fnameC').textContent=`${file.name} (${file.size} bytes)`; $('hashC').textContent=hex; $('hashBoxC').classList.remove('hidden');
+    $('sec2').classList.remove('opacity-50','pointer-events-none'); buildBody();
+    logTo('logC',`SHA-256 of "${file.name}" computed.`,'text-emerald-700');
+  }else{
+    $('fnameV').textContent=`${file.name} (${file.size} bytes)`; $('hashV').textContent=hex; $('hashBoxV').classList.remove('hidden');
+    $('resultBox').classList.add('hidden');
+    logTo('logV',`SHA-256 of "${file.name}" computed.`,'text-teal-700');
+  }
+}
+wireDrop('dropC','fileC','create');
+wireDrop('dropV','fileV','verify');
+
+/* ---------- b64url + ES256 JWT (native) ---------- */
+function b64urlBuf(buf){ let s=''; for(const x of new Uint8Array(buf)) s+=String.fromCharCode(x); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64urlStr(str){ return btoa(unescape(encodeURIComponent(str))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+async function jwkThumbprint(jwk){ return b64urlBuf(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({crv:jwk.crv,kty:jwk.kty,x:jwk.x,y:jwk.y})))); }
+async function signEs256Jwt(header,payload,key){
+  const input=b64urlStr(JSON.stringify(header))+'.'+b64urlStr(JSON.stringify(payload));
+  const sig=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'}, key, new TextEncoder().encode(input));
+  return input+'.'+b64urlBuf(sig);
+}
+
+/* ---------- derive signer address ---------- */
+function deriveAddr(){
+  if(!CONFIG.pk){ LAST.create.addr=null; $('addr').textContent='—'; return; }
+  try{ const w=new ethers.Wallet(CONFIG.pk); LAST.create.addr=w.address; $('addr').textContent=w.address; }
+  catch(e){ LAST.create.addr=null; $('addr').textContent='invalid key'; toast('ES256K key is invalid','err'); }
+}
+
+/* ---------- request body ---------- */
+function buildBody(){
+  if(!LAST.create.hash) return;
+  $('body1').value = JSON.stringify({ jsonrpc:'2.0', method:'timestampHashes', id:1,
+    params:[{ from: LAST.create.addr||'0x<derived-from-key>', hashAlgorithmIds:[0], hashValues:[LAST.create.hash], versionInfo:'0x00' }] }, null, 2);
+}
+
+/* ---------- JSON-RPC + curl export (create) ---------- */
+async function rpc(bodyObj,label){
+  const url=CONFIG.api+'/timestamp/v4/jsonrpc';
+  const headers={'Content-Type':'application/json'}; if(CONFIG.token) headers['Authorization']='Bearer '+CONFIG.token;
+  logTo('logC',`curl -X POST ${url} \\\n  -H "Content-Type: application/json"${CONFIG.token?' \\\n  -H "Authorization: Bearer <TOKEN>"':''} \\\n  -d '${JSON.stringify(bodyObj)}'`);
+  const res=await fetch(url,{method:'POST',headers,body:JSON.stringify(bodyObj)});
+  const json=await res.json();
+  if(json.error) throw new Error(label+': '+JSON.stringify(json.error));
+  return json.result;
+}
+
+/* ---------- get access token ---------- */
+async function getToken(){
+  const jwkStr=$('cfgEs256').value.trim(), did=$('cfgDid').value.trim()||CONFIG.did, api=$('cfgApi').value.trim()||CONFIG.api;
+  if(!jwkStr){ $('cfgEs256').classList.add('err'); toast('ES256 JWK is required to fetch a token','err'); return; }
+  try{
+    $('cfgEs256').classList.remove('err');
+    const jwk=JSON.parse(jwkStr);
+    const key=await crypto.subtle.importKey('jwk',{kty:jwk.kty,crv:jwk.crv,x:jwk.x,y:jwk.y,d:jwk.d,ext:true},{name:'ECDSA',namedCurve:'P-256'},false,['sign']);
+    const kid=did+'#'+await jwkThumbprint(jwk);
+    const now=Math.floor(Date.now()/1000), jti='urn:uuid:'+crypto.randomUUID(), aud=api+'/authorisation/v4';
+    const header={alg:'ES256',typ:'JWT',kid};
+    const payload={iss:did,sub:did,aud,nonce:crypto.randomUUID(),jti,iat:now,nbf:now,exp:now+300,
+      vp:{'@context':['https://www.w3.org/2018/credentials/v1'],id:jti,type:['VerifiablePresentation'],holder:did,verifiableCredential:[]}};
+    logTo('logC','→ signing empty VP + requesting token …','text-acc');
+    const vpJwt=await signEs256Jwt(header,payload,key);
+    const submission={id:crypto.randomUUID(),definition_id:'timestamp_write_presentation',descriptor_map:[]};
+    const body=new URLSearchParams({grant_type:'vp_token',vp_token:vpJwt,presentation_submission:JSON.stringify(submission),scope:'openid timestamp_write'});
+    const url=api+'/authorisation/v4/token';
+    logTo('logC',`curl -X POST ${url} -H "Content-Type: application/x-www-form-urlencoded" --data-urlencode grant_type=vp_token --data-urlencode "scope=openid timestamp_write" --data-urlencode presentation_submission='${JSON.stringify(submission)}' --data-urlencode vp_token='<signed-vp-jwt>'`);
+    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    const json=await res.json().catch(()=>({}));
+    if(!res.ok||json.error) throw new Error(json.error_description||json.error||('HTTP '+res.status));
+    $('cfgToken').value=json.access_token; CONFIG.token=json.access_token; refresh();
+    logTo('logC','access token received — valid '+(json.expires_in||7200)+'s.','text-emerald-700'); toast('Token fetched','ok');
+  }catch(e){
+    if(e instanceof TypeError) logTo('logC','Token fetch: network/CORS error ('+e.message+') → serve over http:// or use the curl above.','text-red-600');
+    else logTo('logC','Token fetch failed: '+e.message,'text-red-600');
+    toast('Token fetch failed — see log','err');
+  }
+}
+$('btnGetToken').onclick=getToken;
+
+/* ---------- create: send timestamp ---------- */
+function guard(){ const m=[]; if(!CONFIG.pk) m.push('cfgPk'); if(!CONFIG.token) m.push('cfgToken');
+  if(m.length){ openSettings(); m.forEach(id=>$(id).classList.add('err')); toast('Fill in the highlighted field'+(m.length>1?'s':''),'err'); return false; } return true; }
+async function run(){
+  if(!LAST.create.hash){ toast('Hash a file first','err'); return; }
+  if(!guard()) return;
+  clearLogEl('logC'); deriveAddr(); buildBody();
+  try{
+    const wallet=new ethers.Wallet(CONFIG.pk);
+    logTo('logC','→ timestampHashes …','text-acc');
+    const unsigned=await rpc(JSON.parse($('body1').value),'timestampHashes');
+    logTo('logC','unsigned tx received:\n'+JSON.stringify(unsigned,null,2),'text-emerald-700');
+    const txReq={to:unsigned.to,data:unsigned.data,value:unsigned.value??'0x0',nonce:Number(unsigned.nonce),
+      gasLimit:unsigned.gasLimit??unsigned.gas,gasPrice:unsigned.gasPrice,chainId:Number(unsigned.chainId),type:0};
+    const signedRaw=await wallet.signTransaction(txReq);
+    const sig=ethers.Transaction.from(signedRaw).signature;
+    logTo('logC','tx signed (ES256K).','text-emerald-700');
+    const body2={jsonrpc:'2.0',method:'sendSignedTransaction',id:1,
+      params:[{protocol:'eth',unsignedTransaction:unsigned,r:sig.r,s:sig.s,v:'0x'+sig.v.toString(16),signedRawTransaction:signedRaw}]};
+    logTo('logC','→ sendSignedTransaction …','text-acc');
+    const txHash=await rpc(body2,'sendSignedTransaction');
+    logTo('logC','SENT. tx hash: '+txHash,'text-emerald-700');
+    const exp='https://blockexplorer-pilot.ebsi.eu/tx/'+txHash;
+    $('logC').innerHTML+=`\n<span class="text-emerald-700">Explorer: <a class="underline text-acc" href="${exp}" target="_blank">${exp}</a></span>`;
+    toast('Timestamp sent','ok');
+  }catch(e){
+    if(e instanceof TypeError) logTo('logC','Network/CORS error: '+e.message+' → use the curl above or serve locally.','text-red-600');
+    else logTo('logC','Error: '+e.message,'text-red-600');
+    toast('Request failed — see log','err');
+  }
+}
+$('btnSend').onclick=()=>run();
+
+/* ---------- verify (public, no auth) ---------- */
+function hexToBytes(hex){ hex=hex.replace(/^0x/,''); const a=new Uint8Array(hex.length/2); for(let i=0;i<a.length;i++) a[i]=parseInt(hex.substr(i*2,2),16); return a; }
+function showResult(ok,html){
+  const box=$('resultBox');
+  box.className='rounded-xl border-2 shadow-sm p-5 mb-4 '+(ok?'border-ver bg-ver/5':'border-red-300 bg-red-50');
+  $('resultInner').innerHTML=html; box.classList.remove('hidden');
+}
+async function verify(){
+  if(!LAST.verify.hash){ toast('Hash a file first','err'); return; }
+  clearLogEl('logV'); $('resultBox').classList.add('hidden');
+  try{
+    const inner=await crypto.subtle.digest('SHA-256', hexToBytes(LAST.verify.hash));
+    const mh=new Uint8Array([0x12,0x20,...new Uint8Array(inner)]);
+    const id='u'+b64urlBuf(mh.buffer);
+    const url=CONFIG.api+'/timestamp/v4/timestamps/'+id;
+    logTo('logV','→ GET '+url,'text-teal-700');
+    const res=await fetch(url);
+    if(res.status===404){
+      logTo('logV','404 — not found.','text-red-600');
+      showResult(false,`<div class="flex items-center gap-2 text-red-700 font-semibold text-base">✗ Not timestamped</div>
+        <p class="text-sm text-slate-600 mt-2">This exact file was never anchored on EBSI. A single changed byte produces a different hash and would fail here too.</p>`);
+      toast('No timestamp found','warn'); return;
+    }
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const j=await res.json();
+    logTo('logV','200 — record found.','text-teal-700');
+    const exp='https://blockexplorer-pilot.ebsi.eu/tx/'+j.transactionHash;
+    showResult(true,`<div class="flex items-center gap-2 text-teal-700 font-semibold text-base">✓ Verified on EBSI</div>
+      <div class="grid sm:grid-cols-2 gap-x-6 gap-y-2 mt-3 text-sm">
+        <div><div class="text-slate-500 text-xs">Timestamp (UTC)</div><div class="font-mono">${j.timestamp}</div></div>
+        <div><div class="text-slate-500 text-xs">Block</div><div class="font-mono">${j.blockNumber}</div></div>
+        <div class="sm:col-span-2"><div class="text-slate-500 text-xs">Anchored by</div><div class="font-mono break-all">${j.timestampedBy}</div></div>
+        <div class="sm:col-span-2"><div class="text-slate-500 text-xs">Transaction</div><a class="font-mono break-all underline text-ver" href="${exp}" target="_blank">${j.transactionHash}</a></div>
+      </div>`);
+    toast('Timestamp found','ok');
+  }catch(e){
+    if(e instanceof TypeError) logTo('logV','Network/CORS error: '+e.message+' → serve over http:// or GET the URL above.','text-red-600');
+    else logTo('logV','Verify failed: '+e.message,'text-red-600');
+    toast('Verify failed — see log','err');
+  }
+}
+$('btnVerify').onclick=verify;
+
+/* ---------- init ---------- */
+switchTab('create');
+refresh();
+</script>
+</body>
+</html>
